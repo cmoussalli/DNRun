@@ -1,0 +1,10 @@
+root = true
+
+# Windows PowerShell 5.1 decodes BOM-less files as the system ANSI codepage, not UTF-8.
+# A stray non-ASCII character (e.g. an em dash) then decodes to bytes the parser reads as
+# smart quotes, breaking the script. The BOM forces correct UTF-8 decoding.
+[*.ps1]
+charset = utf-8-bom
+end_of_line = crlf
+indent_style = space
+indent_size = 4

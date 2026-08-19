@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/DNRun/DNRun.csproj" />
+  <Project Path="tests/DNRun.Tests/DNRun.Tests.csproj" />
+</Solution>

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>DNRun</AssemblyName>
+    <RootNamespace>DNRun</RootNamespace>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(PublishAot)' == 'true'">win-x64</RuntimeIdentifier>
+    <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
+    <StripSymbols>true</StripSymbols>
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <Version>1.0.0</Version>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <Product>DNRun</Product>
+    <Description>Intelligent .NET project runner</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DNRun.Tests" />
+  </ItemGroup>
+
+</Project>
