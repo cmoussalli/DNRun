@@ -1,4 +1,6 @@
-﻿<#
+# Kept BOM-less and strictly ASCII: this file is fetched with `irm` and parsed from a string,
+# where a leading BOM is a parse error. See .editorconfig.
+<#
 .SYNOPSIS
     Installs DNRun on Windows with a single command.
 
