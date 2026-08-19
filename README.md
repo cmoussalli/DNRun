@@ -46,16 +46,7 @@ dnrun list
 
 `iex` cannot forward parameters, so pass options through a script block:
 
-```powershell
-$dnrun = 'https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1'
-& ([scriptblock]::Create((irm $dnrun))) -InstallDir 'D:\Tools\DNRun'
-& ([scriptblock]::Create((irm $dnrun))) -Version 'v1.0.0'   # a specific release
-& ([scriptblock]::Create((irm $dnrun))) -FromSource -NoAot  # build locally, no C++ build tools
-& ([scriptblock]::Create((irm $dnrun))) -Uninstall          # remove the exe and the PATH entry
-```
 
-`-SkipPath` leaves PATH alone; `-Ref` picks the branch or tag to build from source. Re-running the
-one-liner upgrades in place.
 
 ### From a clone
 
@@ -63,24 +54,6 @@ one-liner upgrades in place.
 ./build/publish.ps1      # runs the tests, then publishes artifacts/DNRun.exe (Native AOT)
 ./build/install.ps1      # copies it to C:\CMouss\DNRun and adds that to the user PATH
 ```
-
-`publish.ps1` needs the Visual Studio C++ build tools for the Native AOT link step. Without them,
-publish framework-dependent instead — a much smaller exe that needs the installed .NET runtime:
-
-```powershell
-./build/publish.ps1 -NoAot
-```
-
-### Publishing a release
-
-Push a tag and `.github/workflows/release.yml` tests, AOT-publishes, and attaches `DNRun.exe` plus
-its checksum to the GitHub release the installer downloads:
-
-```powershell
-git tag v1.0.0
-git push origin v1.0.0
-```
-
 ---
 
 ## Commands
@@ -95,11 +68,7 @@ git push origin v1.0.0
 | `dnrun -- <args>` | Run, forwarding `<args>` to the application. |
 | `dnrun --help`, `dnrun version` | Usage and version. |
 
-Arguments reach your app through the standard `dotnet run` separator:
 
-```powershell
-dnrun -- --urls http://localhost:5005
-```
 
 The application is started with the **repository root** as its working directory, so a run behaves
 the same whether you invoked `dnrun` from the root or from `src/XYZ.Domain/`. Relative paths your
@@ -212,9 +181,3 @@ dotnet test                    # 110 tests, no network or process launching requ
 ./build/publish.ps1            # tests + AOT publish
 ```
 
-Layout: `src/DNRun` holds the application (`Discovery`, `Configuration`, `Execution`,
-`Presentation`, `Cli`), `tests/DNRun.Tests` holds the suite, which builds throwaway repository
-trees on disk through the `TempRepo` fixture. No NuGet dependencies outside the test project.
-
-Design notes and the decisions behind them are in `IMPLEMENTATION_PLAN.md`; the behavioural
-specification is `DNRun — Intelligent .NET Project Runner.md`.
