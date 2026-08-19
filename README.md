@@ -1,5 +1,11 @@
 # DNRun — Intelligent .NET Project Runner
 
+Install it in one line — Windows Terminal, no admin rights, no clone:
+
+```powershell
+irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1 | iex
+```
+
 One global command that runs the right .NET project for whatever repository you happen to be in.
 
 ```text
@@ -24,13 +30,11 @@ setup, and troubleshooting. The rest of this file is the short version plus deve
 
 ## Install
 
-One line in Windows Terminal — no admin rights, no clone:
-
 ```powershell
 irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1 | iex
 ```
 
-It downloads `DNRun.exe` from the latest release into `%LOCALAPPDATA%\Programs\DNRun`, verifies its
+That downloads `DNRun.exe` from the latest release into `%LOCALAPPDATA%\Programs\DNRun`, verifies its
 SHA256, and adds that directory to your user PATH. If no release binary is available it builds from
 source instead, which needs the .NET 10 SDK.
 
