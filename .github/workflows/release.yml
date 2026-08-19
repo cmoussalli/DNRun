@@ -1,0 +1,49 @@
+name: Release
+
+# Tag a commit and push the tag to publish a release:
+#   git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test
+        run: dotnet test tests/DNRun.Tests/DNRun.Tests.csproj -c Release --nologo
+
+      # windows-latest ships the MSVC toolchain, so the Native AOT link step works out of the box.
+      - name: Publish (Native AOT)
+        run: dotnet publish src/DNRun/DNRun.csproj -c Release -r win-x64 -o artifacts --nologo -p:PublishAot=true
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash artifacts/DNRun.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  DNRun.exe" | Set-Content artifacts/DNRun.exe.sha256 -Encoding ascii
+          Write-Host "DNRun.exe  $hash"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: DNRun ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            artifacts/DNRun.exe
+            artifacts/DNRun.exe.sha256

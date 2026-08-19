@@ -1,0 +1,302 @@
+﻿<#
+.SYNOPSIS
+    Installs DNRun on Windows with a single command.
+
+.DESCRIPTION
+    Downloads DNRun.exe from the latest GitHub release, copies it to an install directory, and
+    adds that directory to the user PATH. No administrator rights are needed.
+
+    When no release asset is available - or when -FromSource is passed - the script falls back to
+    building DNRun from the repository sources, which requires the .NET 10 SDK.
+
+    Run it straight from the web:
+
+        irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1 | iex
+
+    To pass options, create a script block instead - `iex` cannot forward parameters:
+
+        & ([scriptblock]::Create((irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1))) -InstallDir 'D:\Tools\DNRun'
+
+.PARAMETER InstallDir
+    Where DNRun.exe is placed. Defaults to %LOCALAPPDATA%\Programs\DNRun.
+
+.PARAMETER Version
+    Release tag to install, for example 'v1.0.0'. Defaults to the latest release.
+
+.PARAMETER FromSource
+    Skip the release download and build from the repository sources. Requires the .NET 10 SDK.
+
+.PARAMETER Ref
+    Branch or tag to build from when building from source. Defaults to 'main'.
+
+.PARAMETER NoAot
+    Build a framework-dependent executable instead of Native AOT when building from source.
+    Much faster to build and needs no C++ build tools, but requires the .NET runtime at run time.
+
+.PARAMETER SkipPath
+    Install the executable but leave the user PATH untouched.
+
+.PARAMETER Uninstall
+    Remove DNRun.exe and drop the install directory from the user PATH.
+
+.EXAMPLE
+    irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1 | iex
+
+.EXAMPLE
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1))) -FromSource -NoAot
+#>
+[CmdletBinding()]
+param(
+    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\DNRun'),
+    [string]$Version,
+    [switch]$FromSource,
+    [string]$Ref = 'main',
+    [switch]$NoAot,
+    [switch]$SkipPath,
+    [switch]$Uninstall
+)
+
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'   # Write-Progress makes Invoke-WebRequest an order of magnitude slower.
+
+$Owner = 'cmoussalli'
+$Repo = 'DNRun'
+$ExeName = 'DNRun.exe'
+
+# Windows PowerShell 5.1 still defaults to TLS 1.0, which github.com refuses.
+if ($PSVersionTable.PSVersion.Major -lt 6) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}
+
+function Write-Step($message) { Write-Host $message -ForegroundColor Cyan }
+function Write-Ok($message) { Write-Host $message -ForegroundColor Green }
+
+function Test-Windows {
+    # $IsWindows only exists on PowerShell 6+; on 5.1 the host is Windows by definition.
+    if ($PSVersionTable.PSVersion.Major -ge 6) { return $IsWindows }
+    return $true
+}
+
+function Add-ToUserPath([string]$directory) {
+    $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+    $entries = @($userPath -split ';' | Where-Object { $_ })
+
+    if ($entries -contains $directory) {
+        Write-Host "PATH already contains $directory"
+        return $false
+    }
+
+    [Environment]::SetEnvironmentVariable('PATH', ((@($entries) + $directory) -join ';'), 'User')
+    Write-Ok "Added $directory to the user PATH."
+    return $true
+}
+
+function Remove-FromUserPath([string]$directory) {
+    $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+    $entries = @($userPath -split ';' | Where-Object { $_ })
+    $kept = @($entries | Where-Object { $_.TrimEnd('\') -ne $directory.TrimEnd('\') })
+
+    if ($kept.Count -eq $entries.Count) { return }
+
+    [Environment]::SetEnvironmentVariable('PATH', ($kept -join ';'), 'User')
+    Write-Ok "Removed $directory from the user PATH."
+}
+
+function Get-ReleaseAsset {
+    <# Returns @{ Url; Tag; ChecksumUrl } for the requested release, or $null when there is none. #>
+    $api = if ($Version) {
+        "https://api.github.com/repos/$Owner/$Repo/releases/tags/$Version"
+    }
+    else {
+        "https://api.github.com/repos/$Owner/$Repo/releases/latest"
+    }
+
+    try {
+        $release = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'DNRun-Installer' } -UseBasicParsing
+    }
+    catch {
+        # 404 means no release yet; anything else (rate limit, offline) is worth reporting before falling back.
+        $status = $null
+        if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+        if ($status -ne 404) { Write-Warning "Could not query the GitHub release API: $($_.Exception.Message)" }
+        return $null
+    }
+
+    $asset = $release.assets | Where-Object { $_.name -eq $ExeName } | Select-Object -First 1
+    if (-not $asset) { return $null }
+
+    $checksum = $release.assets | Where-Object { $_.name -eq "$ExeName.sha256" } | Select-Object -First 1
+
+    return @{
+        Url         = $asset.browser_download_url
+        Tag         = $release.tag_name
+        ChecksumUrl = if ($checksum) { $checksum.browser_download_url } else { $null }
+    }
+}
+
+function Save-ReleaseExe($asset, [string]$destination) {
+    Write-Step "Downloading DNRun $($asset.Tag)..."
+    Invoke-WebRequest -Uri $asset.Url -OutFile $destination -UseBasicParsing
+
+    if (-not $asset.ChecksumUrl) {
+        Write-Warning 'The release publishes no SHA256 file; skipping checksum verification.'
+        return
+    }
+
+    $expected = ((Invoke-RestMethod -Uri $asset.ChecksumUrl -UseBasicParsing) -split '\s+')[0].Trim()
+    $actual = (Get-FileHash -Path $destination -Algorithm SHA256).Hash
+
+    if ($expected -and $actual -ne $expected) {
+        Remove-Item $destination -Force -ErrorAction SilentlyContinue
+        throw "Checksum mismatch for $ExeName (expected $expected, got $actual). The download was discarded."
+    }
+
+    Write-Host 'Checksum verified.'
+}
+
+function Build-FromSource([string]$destination) {
+    $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+    if (-not $dotnet) {
+        throw 'Building from source needs the .NET 10 SDK, and dotnet is not on PATH. Install it from https://dotnet.microsoft.com/download and run this again.'
+    }
+
+    $sdks = & dotnet --list-sdks
+    if (-not ($sdks | Where-Object { $_ -match '^\s*10\.' })) {
+        Write-Warning "No .NET 10 SDK was found. Installed SDKs:`n$($sdks -join "`n")"
+        Write-Warning 'The build will likely fail. Install the .NET 10 SDK from https://dotnet.microsoft.com/download.'
+    }
+
+    $work = Join-Path ([System.IO.Path]::GetTempPath()) "dnrun-src-$([guid]::NewGuid().ToString('n').Substring(0, 8))"
+    New-Item -ItemType Directory -Path $work -Force | Out-Null
+
+    try {
+        $zip = Join-Path $work 'source.zip'
+        $url = "https://github.com/$Owner/$Repo/archive/$Ref.zip"
+
+        Write-Step "Downloading sources from $Ref..."
+        Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+
+        Expand-Archive -Path $zip -DestinationPath $work -Force
+        $repoRoot = Get-ChildItem -Path $work -Directory | Select-Object -First 1
+        if (-not $repoRoot) { throw 'The downloaded archive contained no source directory.' }
+
+        $project = Join-Path $repoRoot.FullName 'src/DNRun/DNRun.csproj'
+        if (-not (Test-Path $project)) { throw "Expected $project in the downloaded sources." }
+
+        $output = Join-Path $work 'out'
+        $publishArgs = @('publish', $project, '-c', 'Release', '-r', 'win-x64', '-o', $output, '--nologo')
+
+        if ($NoAot) {
+            Write-Step 'Building (framework-dependent single file)...'
+            $publishArgs += @('-p:PublishAot=false', '-p:PublishSingleFile=true', '-p:SelfContained=false')
+        }
+        else {
+            Write-Step 'Building (Native AOT - this takes a minute)...'
+            $publishArgs += '-p:PublishAot=true'
+
+            # The AOT link step shells out to vswhere.exe, which is not on PATH outside a
+            # Developer Command Prompt.
+            if (-not (Get-Command vswhere.exe -ErrorAction SilentlyContinue)) {
+                $installerDir = @(
+                    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer",
+                    "$env:ProgramFiles\Microsoft Visual Studio\Installer"
+                ) | Where-Object { Test-Path (Join-Path $_ 'vswhere.exe') } | Select-Object -First 1
+
+                if ($installerDir) { $env:PATH = "$installerDir;$env:PATH" }
+            }
+        }
+
+        & dotnet @publishArgs
+        $built = Join-Path $output $ExeName
+
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $built)) {
+            if ($NoAot) { throw "Build failed with exit code $LASTEXITCODE." }
+
+            Write-Warning 'The Native AOT build failed - it needs the Visual Studio C++ build tools. Retrying framework-dependent.'
+            $output2 = Join-Path $work 'out-nc'
+            & dotnet publish $project -c Release -r win-x64 -o $output2 --nologo `
+                -p:PublishAot=false -p:PublishSingleFile=true -p:SelfContained=false
+            $built = Join-Path $output2 $ExeName
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $built)) { throw "Build failed with exit code $LASTEXITCODE." }
+        }
+
+        Copy-Item $built $destination -Force
+    }
+    finally {
+        Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# --- main -------------------------------------------------------------------------------------
+
+if (-not (Test-Windows)) { throw 'DNRun ships a Windows executable; this installer only runs on Windows.' }
+
+$target = Join-Path $InstallDir $ExeName
+
+if ($Uninstall) {
+    if (Test-Path $target) {
+        Remove-Item $target -Force
+        Write-Ok "Removed $target"
+    }
+    else {
+        Write-Host "$target was not there."
+    }
+
+    Remove-FromUserPath $InstallDir
+
+    if ((Test-Path $InstallDir) -and -not (Get-ChildItem -Path $InstallDir -Force)) {
+        Remove-Item $InstallDir -Force
+    }
+
+    Write-Host 'DNRun uninstalled. Your dnrun.config.json files were left alone.'
+    return
+}
+
+if (-not (Test-Path $InstallDir)) {
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+}
+
+$staged = Join-Path $InstallDir "$ExeName.download"
+
+try {
+    $asset = if ($FromSource) { $null } else { Get-ReleaseAsset }
+
+    if ($asset) {
+        Save-ReleaseExe $asset $staged
+    }
+    else {
+        if (-not $FromSource) {
+            Write-Host "No published $ExeName was found for this repository - building from source instead."
+        }
+        Build-FromSource $staged
+    }
+
+    # A running DNRun.exe holds a lock on the file; say so plainly instead of failing cryptically.
+    try {
+        Move-Item $staged $target -Force
+    }
+    catch [System.IO.IOException] {
+        throw "Could not write $target - is DNRun.exe currently running? ($($_.Exception.Message))"
+    }
+}
+finally {
+    if (Test-Path $staged) { Remove-Item $staged -Force -ErrorAction SilentlyContinue }
+}
+
+# Unblock so SmartScreen does not prompt on every run of a downloaded executable.
+Unblock-File -Path $target -ErrorAction SilentlyContinue
+
+$installedVersion = try { (& $target version) 2>&1 | Select-Object -First 1 } catch { $null }
+Write-Ok "Installed $target$(if ($installedVersion) { " ($installedVersion)" })"
+
+$pathChanged = $false
+if (-not $SkipPath) { $pathChanged = Add-ToUserPath $InstallDir }
+
+# Make dnrun usable in the terminal that ran the installer, not just in new ones.
+if ($env:PATH -notlike "*$InstallDir*") { $env:PATH = "$InstallDir;$env:PATH" }
+
+Write-Host ''
+if ($pathChanged) { Write-Host 'Open a new terminal so the PATH change is picked up everywhere.' }
+Write-Host 'Try it out:'
+Write-Host '    cd <any .NET repository>'
+Write-Host '    dnrun list'

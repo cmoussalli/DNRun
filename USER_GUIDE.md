@@ -34,12 +34,17 @@ did not expect.
 
 ## 1. Install
 
-From the DNRun source directory, in PowerShell:
+Open Windows Terminal and run one line:
 
 ```powershell
-./build/publish.ps1      # runs the tests, then builds artifacts/DNRun.exe
-./build/install.ps1      # copies it to C:\CMouss\DNRun and adds that to your user PATH
+irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1 | iex
 ```
+
+That downloads `DNRun.exe` from the latest release into `%LOCALAPPDATA%\Programs\DNRun`, checks its
+SHA256 against the one published with the release, and adds the directory to your user PATH. No
+administrator rights and no clone are involved. When the repository has no release binary yet, the
+same script downloads the sources and builds them, which needs the [.NET 10
+SDK](https://dotnet.microsoft.com/download).
 
 **Open a new terminal.** PATH changes only reach terminals started afterwards.
 
@@ -52,21 +57,43 @@ dnrun list
 
 ### Install options
 
+`iex` runs a script but cannot pass arguments to it, so options go through a script block:
+
+```powershell
+$dnrun = 'https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1'
+& ([scriptblock]::Create((irm $dnrun))) -InstallDir 'D:\Tools\DNRun'
+```
+
 | Option | Effect |
 |---|---|
-| `./build/install.ps1 -InstallDir 'D:\Tools\DNRun'` | Install somewhere other than `C:\CMouss\DNRun`. |
-| `./build/install.ps1 -SkipPath` | Copy the exe but leave PATH untouched (you manage PATH yourself). |
-| `./build/publish.ps1 -NoAot` | Build without Native AOT. Use this if the publish fails at the native link step. |
-| `./build/publish.ps1 -SkipTests` | Skip the test run before publishing. |
+| `-InstallDir 'D:\Tools\DNRun'` | Install somewhere other than `%LOCALAPPDATA%\Programs\DNRun`. |
+| `-Version 'v1.0.0'` | Install a specific release instead of the latest. |
+| `-FromSource` | Ignore releases and build from the repository sources (.NET 10 SDK required). |
+| `-Ref 'develop'` | Branch or tag to build from with `-FromSource`. |
+| `-NoAot` | With `-FromSource`, build framework-dependent instead of Native AOT. |
+| `-SkipPath` | Copy the exe but leave PATH untouched (you manage PATH yourself). |
+| `-Uninstall` | Remove the exe and drop the install directory from PATH. |
 
-The default build is a self-contained ~7 MB executable that needs no .NET runtime installed. The
-`-NoAot` build is a ~150 KB executable that uses the .NET runtime you already have — it starts
-about 40 ms slower and is otherwise identical.
+The released build is a self-contained ~7 MB Native AOT executable that needs no .NET runtime
+installed. The `-NoAot` build is a ~150 KB executable that uses the .NET runtime you already have —
+it starts about 40 ms slower and is otherwise identical, and it does not need the Visual Studio C++
+build tools that the AOT link step requires.
+
+### Installing from a clone
+
+If you have the sources checked out already:
+
+```powershell
+./build/publish.ps1      # runs the tests, then builds artifacts/DNRun.exe
+./build/install.ps1      # copies it to C:\CMouss\DNRun and adds that to your user PATH
+```
+
+`./build/publish.ps1 -SkipTests` skips the test run; `-NoAot` builds without Native AOT.
 
 ### Upgrading
 
-Re-run both scripts. If the copy fails with a file-in-use error, a `dnrun` process is still
-running — close it and try again.
+Re-run the one-liner — it overwrites the installed executable in place. If the copy fails with a
+file-in-use error, a `dnrun` process is still running; close it and try again.
 
 ---
 
@@ -562,8 +589,15 @@ Only `dnrun.config.json` at the repository root, and only when you make a select
 else on disk is touched — no `.gitignore` edits, no `.csproj` changes.
 
 **How do I uninstall it?**
-Delete `C:\CMouss\DNRun` and remove that entry from your user PATH. Optionally delete any
-`dnrun.config.json` files from your repositories.
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1))) -Uninstall
+```
+
+That deletes the executable and removes the install directory from your user PATH — add
+`-InstallDir` if you installed elsewhere. By hand: delete the install directory and drop it from
+PATH. Either way, `dnrun.config.json` files in your repositories are left alone; delete them
+yourself if you want them gone.
 
 **How do I turn off the colours?**
 Set `NO_COLOR` to anything in your environment. Colours are also suppressed automatically when

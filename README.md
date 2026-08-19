@@ -24,15 +24,40 @@ setup, and troubleshooting. The rest of this file is the short version plus deve
 
 ## Install
 
+One line in Windows Terminal — no admin rights, no clone:
+
 ```powershell
-./build/publish.ps1      # runs the tests, then publishes artifacts/DNRun.exe (Native AOT)
-./build/install.ps1      # copies it to C:\CMouss\DNRun and adds that to the user PATH
+irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1 | iex
 ```
+
+It downloads `DNRun.exe` from the latest release into `%LOCALAPPDATA%\Programs\DNRun`, verifies its
+SHA256, and adds that directory to your user PATH. If no release binary is available it builds from
+source instead, which needs the .NET 10 SDK.
 
 Open a new terminal, then from any .NET repository:
 
 ```powershell
 dnrun list
+```
+
+`iex` cannot forward parameters, so pass options through a script block:
+
+```powershell
+$dnrun = 'https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1'
+& ([scriptblock]::Create((irm $dnrun))) -InstallDir 'D:\Tools\DNRun'
+& ([scriptblock]::Create((irm $dnrun))) -Version 'v1.0.0'   # a specific release
+& ([scriptblock]::Create((irm $dnrun))) -FromSource -NoAot  # build locally, no C++ build tools
+& ([scriptblock]::Create((irm $dnrun))) -Uninstall          # remove the exe and the PATH entry
+```
+
+`-SkipPath` leaves PATH alone; `-Ref` picks the branch or tag to build from source. Re-running the
+one-liner upgrades in place.
+
+### From a clone
+
+```powershell
+./build/publish.ps1      # runs the tests, then publishes artifacts/DNRun.exe (Native AOT)
+./build/install.ps1      # copies it to C:\CMouss\DNRun and adds that to the user PATH
 ```
 
 `publish.ps1` needs the Visual Studio C++ build tools for the Native AOT link step. Without them,
@@ -42,7 +67,15 @@ publish framework-dependent instead — a much smaller exe that needs the instal
 ./build/publish.ps1 -NoAot
 ```
 
-`install.ps1 -InstallDir 'D:\Tools\DNRun'` installs elsewhere; `-SkipPath` leaves PATH alone.
+### Publishing a release
+
+Push a tag and `.github/workflows/release.yml` tests, AOT-publishes, and attaches `DNRun.exe` plus
+its checksum to the GitHub release the installer downloads:
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ---
 
