@@ -59,7 +59,7 @@ SDK](https://dotnet.microsoft.com/download).
 Confirm it worked from any .NET repository:
 
 ```powershell
-dnrun version     # dnrun 1.0.0
+dnrun version     # dnrun 1.1.0
 dnrun list        # the projects you can run
 dnuget list       # the packages you can version
 ```

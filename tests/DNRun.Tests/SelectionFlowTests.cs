@@ -339,6 +339,9 @@ public sealed class SelectionFlowTests
         Assert.Null(helpRunner.Plan);
         Assert.Contains("dnrun select", helpOutput, StringComparison.Ordinal);
         Assert.Equal(0, versionCode);
-        Assert.Contains("dnrun 1.0.0", versionOutput, StringComparison.Ordinal);
+
+        // The shape, not the literal: a test that has to be edited alongside every version bump
+        // only ever catches the edit. This still fails if the version stops being reported at all.
+        Assert.Matches(@"^dnrun \d+\.\d+\.\d+", versionOutput.Trim());
     }
 }
