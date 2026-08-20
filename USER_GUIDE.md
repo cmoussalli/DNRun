@@ -8,6 +8,13 @@ once, and from then on a single command replaces every hand-configured
 C:\Projects\XYZ> dnrun
 ```
 
+It also versions the package that repository publishes, so a release is one line rather than a
+hunt through `.csproj` files:
+
+```text
+C:\Projects\XYZ> dnuget 1.2.14
+```
+
 This guide covers installing it, using it day to day, and what to do when it does something you
 did not expect.
 
@@ -23,12 +30,13 @@ did not expect.
 3. [Everyday use](#3-everyday-use)
 4. [Command reference](#4-command-reference)
 5. [Passing arguments to your app](#5-passing-arguments-to-your-app)
-6. [The configuration file](#6-the-configuration-file)
-7. [Using DNRun with Orca IDE](#7-using-dnrun-with-orca-ide)
-8. [How DNRun decides what to run](#8-how-dnrun-decides-what-to-run)
-9. [Troubleshooting](#9-troubleshooting)
-10. [Exit codes](#10-exit-codes)
-11. [FAQ](#11-faq)
+6. [Versioning your NuGet package](#6-versioning-your-nuget-package)
+7. [The configuration file](#7-the-configuration-file)
+8. [Using DNRun with Orca IDE](#8-using-dnrun-with-orca-ide)
+9. [How DNRun decides what to run](#9-how-dnrun-decides-what-to-run)
+10. [Troubleshooting](#10-troubleshooting)
+11. [Exit codes](#11-exit-codes)
+12. [FAQ](#12-faq)
 
 ---
 
@@ -41,8 +49,8 @@ irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1 | iex
 ```
 
 That downloads `DNRun.exe` from the latest release into `%LOCALAPPDATA%\Programs\DNRun`, checks its
-SHA256 against the one published with the release, and adds the directory to your user PATH. No
-administrator rights and no clone are involved. When the repository has no release binary yet, the
+SHA256 against the one published with the release, writes the one-line `dnuget.cmd` beside it, and
+adds the directory to your user PATH. No administrator rights and no clone are involved. When the repository has no release binary yet, the
 same script downloads the sources and builds them, which needs the [.NET 10
 SDK](https://dotnet.microsoft.com/download).
 
@@ -52,7 +60,8 @@ Confirm it worked from any .NET repository:
 
 ```powershell
 dnrun version     # dnrun 1.0.0
-dnrun list
+dnrun list        # the projects you can run
+dnuget list       # the packages you can version
 ```
 
 ### Install options
@@ -172,7 +181,7 @@ If one of these should be runnable, choose it with 'dnrun select',
 or list it under "runnableProjects" in dnrun.config.json.
 ```
 
-See [Troubleshooting](#9-troubleshooting) if a project you expected is in that second list.
+See [Troubleshooting](#10-troubleshooting) if a project you expected is in that second list.
 
 ---
 
@@ -287,6 +296,15 @@ outright so the repository looks untouched; if you have other settings in it, on
 
 Usage text and version. `help`, `-h`, and `-?` all work; so does `--version`.
 
+### `dnuget <version>`
+
+Set the version of the NuGet package the repository publishes. See
+[Versioning your NuGet package](#6-versioning-your-nuget-package) for the whole story; the short
+version is `dnuget 1.2.14`.
+
+`dnuget` and `dnrun nuget` are the same command - `dnuget.cmd` is a one-line shim the installer
+writes next to `DNRun.exe`.
+
 ---
 
 ## 5. Passing arguments to your app
@@ -312,7 +330,110 @@ paths it opens behave the same no matter which subdirectory you invoked `dnrun` 
 
 ---
 
-## 6. The configuration file
+## 6. Versioning your NuGet package
+
+If the repository publishes a package, `dnuget` sets its version without you opening a `.csproj`:
+
+```powershell
+dnuget 1.2.14
+```
+
+```text
+DNRun - Intelligent .NET Project Runner
+
+Package project:
+  XYZ.Core
+
+Updated src/XYZ.Core/XYZ.Core.csproj:
+  Version               1.0.3 -> 1.2.14
+  InformationalVersion  1.0.3 -> 1.2.14
+  AssemblyVersion       1.0.3.0 -> 1.2.14.0
+
+XYZ.Core will now publish as 1.2.14.
+```
+
+Nothing is built or pushed. The next `dotnet pack` or `dotnet publish` picks the new version up.
+
+### The commands
+
+| Command | What it does |
+|---|---|
+| `dnuget <version>` | Set the package version. Asks which project the first time, then remembers. |
+| `dnuget` | Show the package project and the version it declares today. Writes nothing. |
+| `dnuget list` | Every packable project with its current version. |
+| `dnuget select` | Choose a different package project and save it. |
+| `dnuget select <version>` | Choose a different project and set its version in one go. |
+| `dnuget --all <version>` | Set the version on every packable project. |
+| `dnuget reset` | Forget the saved package project. |
+| `dnuget --help` | Usage. |
+
+### Which versions are accepted
+
+Two to four numbers, an optional prerelease label, an optional build metadata suffix:
+
+```text
+1.2.14        1.2          1.2.14.3
+1.3.0-beta.1  2.0.0-rc.2   2.0.0-rc.2+build.57
+```
+
+A leading `v` is accepted, so `dnuget v1.2.14` works if that is the habit from tagging. Anything
+that would not restore - `1.2.x`, `next`, `1.2.14-` - is refused before any file is opened, so a
+typo costs nothing.
+
+### Which project it picks
+
+The same discovery as `dnrun`, filtered for packaging instead of running:
+
+- Projects with `<IsPackable>false</IsPackable>`, and test projects, are never offered.
+- Projects that ask to be packaged - `IsPackable`, `PackageId`, `GeneratePackageOnBuild`, or
+  `PackAsTool` - are the only ones offered when the repository has any.
+- Otherwise every remaining project is offered, libraries first.
+
+With one candidate it just works. With several you are asked once, and the answer is saved as
+`packageProject` in `dnrun.config.json`. That is separate from `startupProject`: the app you run
+and the library you publish are usually different projects, and `dnuget` never changes which
+project `dnrun` runs.
+
+### Which properties it writes
+
+Whichever of these the project already declares:
+
+| Property | Written as |
+|---|---|
+| `PackageVersion`, `Version` | The version, without any `+metadata`. |
+| `VersionPrefix` / `VersionSuffix` | Split: `2.0.0` and `beta.1`. A stable release empties the suffix. |
+| `InformationalVersion` | The full version, `+metadata` included. |
+| `AssemblyVersion`, `FileVersion` | Numbers only, zero-filled: `2.0.0-rc.1` becomes `2.0.0.0`. |
+
+Properties the project does not declare are left out - `dnuget` never adds `AssemblyVersion` to a
+project that had none, because that changes what the build produces. The one exception is a project
+that declares no version at all, which gets a `<Version>`.
+
+### When the version lives in `Directory.Build.props`
+
+Repositories that publish several packages together usually declare the version once, in a
+`Directory.Build.props` above the projects. `dnuget` follows it there and updates that file, saying
+so first:
+
+```text
+The version is declared in Directory.Build.props, so it is updated there.
+  2 other packable projects inherit it: XYZ.Client, XYZ.Abstractions
+```
+
+Writing a `<Version>` into the `.csproj` instead would quietly opt that one project *out* of the
+shared version, which is never what a version bump means.
+
+### What the edit looks like
+
+Only the version values change. Comments, indentation (tabs included), blank lines, CRLF endings,
+and a byte-order mark all survive, so the diff is one line per property. A `<Version>` element
+inside a `<PackageReference>` is never mistaken for the project's own version. The file is written
+through a temp file in the same directory, so an interrupted run cannot leave a truncated project
+behind.
+
+---
+
+## 7. The configuration file
 
 DNRun writes `dnrun.config.json` at the repository root the first time you choose between
 several projects:
@@ -327,11 +448,12 @@ several projects:
 The path is relative to the repository root and uses forward slashes, so cloning or moving the
 repository does not invalidate it.
 
-You can edit the file by hand. Two optional settings are available:
+You can edit the file by hand. Three optional settings are available:
 
 ```json
 {
   "startupProject": "src/XYZ.Web/XYZ.Web.csproj",
+  "packageProject": "src/XYZ.Core/XYZ.Core.csproj",
   "ignoreDirectories": ["samples", "legacy"],
   "runnableProjects": ["src/Odd/Odd.csproj"]
 }
@@ -340,6 +462,7 @@ You can edit the file by hand. Two optional settings are available:
 | Setting | What it does |
 |---|---|
 | `startupProject` | The project `dnrun` runs. Repository-relative path. |
+| `packageProject` | The project `dnuget` versions. Repository-relative path. |
 | `ignoreDirectories` | Extra directory names to skip while scanning, on top of the built-in list. |
 | `runnableProjects` | Force these projects into the candidate list even if DNRun classified them as libraries. Accepts a repository-relative path or a bare project name. |
 
@@ -355,7 +478,7 @@ Your call — DNRun does not touch `.gitignore` either way.
 
 ---
 
-## 7. Using DNRun with Orca IDE
+## 8. Using DNRun with Orca IDE
 
 Set the run command for every workspace to the same thing:
 
@@ -402,7 +525,7 @@ environment.
 
 ---
 
-## 8. How DNRun decides what to run
+## 9. How DNRun decides what to run
 
 Useful background when the answer surprises you.
 
@@ -462,7 +585,7 @@ ignored.
 **Important limitation.** DNRun reads `.csproj` files directly and does not evaluate MSBuild. A
 project whose `OutputType` is set in a shared `Directory.Build.props` therefore looks like a
 library. The fix is the `runnableProjects` setting — see
-[the config file](#6-the-configuration-file) and [Troubleshooting](#9-troubleshooting).
+[the config file](#7-the-configuration-file) and [Troubleshooting](#10-troubleshooting).
 
 ### Menu order
 
@@ -471,7 +594,7 @@ each group. The order is stable, so `[1]` means the same project every time.
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 ### `dnrun` is not recognised as a command
 
@@ -520,10 +643,32 @@ The selection is not being saved. Check that `dnrun.config.json` can be written 
 repository root — DNRun warns if the write fails, but carries on and runs your app anyway, so
 the warning is easy to miss above the application output.
 
+### `dnuget` is not recognised, but `dnrun` is
+
+`dnuget.cmd` is missing from the install directory - most likely because DNRun was installed
+before the command existed. Re-run the installer; it rewrites the shim every time.
+`dnrun nuget 1.2.14` works in the meantime, and is exactly the same command.
+
+### `dnuget` picked the wrong project
+
+```powershell
+dnuget select 1.2.14
+```
+
+Pick the right one; the choice replaces the saved `packageProject`. If the project you want is not
+even listed, it is opting out with `<IsPackable>false</IsPackable>`, or it looks like a test
+project. `dnuget list` shows what was found.
+
+### `dnuget` changed `Directory.Build.props` instead of my `.csproj`
+
+That is deliberate, and it is announced before the write: the version was declared there, so that
+is where a bump belongs - every project under that file shares it. To version one project on its
+own, give it its own `<Version>` in its `.csproj`; `dnuget` then edits that from the next run on.
+
 ### It hangs, or exits with code 2, under Orca
 
 No interactive terminal is attached, so DNRun refuses to prompt. Run `dnrun select` once from a
-normal terminal. See [Orca integration](#7-using-dnrun-with-orca-ide).
+normal terminal. See [Orca integration](#8-using-dnrun-with-orca-ide).
 
 ### `'dotnet' could not be started`
 
@@ -542,24 +687,25 @@ the JSON, or run `dnrun reset` to delete it and `dnrun select` to write a fresh 
 
 ---
 
-## 10. Exit codes
+## 11. Exit codes
 
 Useful in scripts and CI.
 
 | Code | Meaning |
 |---|---|
 | *your app's own code* | The application ran. Its exit code is passed straight through, unchanged. |
-| `0` | Success — including for `list`, `config`, and `reset`. |
-| `1` | No runnable .NET project was found. |
+| `0` | Success — including for `list`, `config`, `reset`, and every `dnuget` command. |
+| `1` | No project the command could act on: nothing runnable for `dnrun`, nothing packable for `dnuget`. |
 | `2` | Bad usage, or several candidates with no terminal available to ask on. |
 | `3` | `dotnet` is not on PATH, or the process could not be started. |
 | `4` | The configuration file exists but is unusable. |
+| `5` | `dnuget` could not rewrite a project file - read-only, locked, or not valid XML. |
 
-Codes `1`–`4` are only ever returned by DNRun itself, before your application starts.
+Codes `1`–`5` are only ever returned by DNRun itself, before your application starts.
 
 ---
 
-## 11. FAQ
+## 12. FAQ
 
 **Do I need to copy DNRun into each project?**
 No. That is the whole point. It is installed once, outside your repositories, and works out where

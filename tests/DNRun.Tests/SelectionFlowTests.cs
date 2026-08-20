@@ -9,6 +9,7 @@ namespace DNRun.Tests;
 /// End-to-end flow tests through <see cref="CommandRouter"/>. The process runner is faked, so
 /// these assert the composed command line rather than launching anything.
 /// </summary>
+[Collection(ConsoleCapture.Name)]
 public sealed class SelectionFlowTests
 {
     [ModuleInitializer]

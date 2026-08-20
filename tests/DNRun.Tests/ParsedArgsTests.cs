@@ -26,9 +26,36 @@ public sealed class ParsedArgsTests
     [InlineData("version", nameof(Verb.Version))]
     [InlineData("--version", nameof(Verb.Version))]
     [InlineData("SELECT", nameof(Verb.Select))]
+    [InlineData("nuget", nameof(Verb.Nuget))]
+    [InlineData("pack", nameof(Verb.Nuget))]
+    [InlineData("package", nameof(Verb.Nuget))]
     public void Recognizes_the_verbs(string argument, string expected)
     {
         Assert.Equal(Enum.Parse<Verb>(expected), ParsedArgs.Parse([argument]).Verb);
+    }
+
+    [Fact]
+    public void The_nuget_verb_keeps_its_own_arguments_without_a_separator()
+    {
+        var parsed = ParsedArgs.Parse(["nuget", "1.2.14"]);
+
+        Assert.Equal(Verb.Nuget, parsed.Verb);
+        Assert.Equal(["1.2.14"], parsed.Forwarded);
+        Assert.Null(parsed.Error);
+    }
+
+    [Fact]
+    public void The_dnuget_alias_becomes_the_nuget_verb()
+    {
+        Assert.Equal(["nuget", "1.2.14"], ParsedArgs.NormalizeArgs("dnuget", ["1.2.14"]));
+        Assert.Equal(["nuget"], ParsedArgs.NormalizeArgs("DNuGet", []));
+    }
+
+    [Fact]
+    public void Any_other_executable_name_is_left_alone()
+    {
+        Assert.Equal(["list"], ParsedArgs.NormalizeArgs("DNRun", ["list"]));
+        Assert.Equal(["list"], ParsedArgs.NormalizeArgs(null, ["list"]));
     }
 
     [Fact]

@@ -16,6 +16,14 @@ internal sealed class DNRunConfig
     [JsonPropertyName("startupProject")]
     public string? StartupProject { get; set; }
 
+    /// <summary>
+    /// The project whose package version <c>dnuget</c> updates. Kept separate from
+    /// <see cref="StartupProject"/> because the app you run and the library you publish are
+    /// rarely the same project.
+    /// </summary>
+    [JsonPropertyName("packageProject")]
+    public string? PackageProject { get; set; }
+
     /// <summary>Additional directory names to prune during scanning, on top of the built-in list.</summary>
     [JsonPropertyName("ignoreDirectories")]
     public string[]? IgnoreDirectories { get; set; }
@@ -31,6 +39,7 @@ internal sealed class DNRunConfig
     [JsonIgnore]
     public bool IsEmpty =>
         string.IsNullOrWhiteSpace(StartupProject)
+        && string.IsNullOrWhiteSpace(PackageProject)
         && (IgnoreDirectories is null || IgnoreDirectories.Length == 0)
         && (RunnableProjects is null || RunnableProjects.Length == 0);
 }

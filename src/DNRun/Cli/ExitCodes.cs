@@ -5,7 +5,7 @@ internal static class ExitCodes
 {
     public const int Success = 0;
 
-    /// <summary>No runnable .NET project was found (spec §6 Scenario A).</summary>
+    /// <summary>No project the command could act on was found: nothing runnable, or nothing packable.</summary>
     public const int NoRunnableProject = 1;
 
     /// <summary>Bad usage, ambiguous selection with no TTY, or an abandoned prompt.</summary>
@@ -16,4 +16,7 @@ internal static class ExitCodes
 
     /// <summary>The configuration file exists but is unreadable and unrecoverable.</summary>
     public const int ConfigError = 4;
+
+    /// <summary>A project file could not be rewritten with the new package version.</summary>
+    public const int VersionUpdateFailed = 5;
 }

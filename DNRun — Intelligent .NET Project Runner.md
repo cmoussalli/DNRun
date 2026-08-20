@@ -1047,3 +1047,87 @@ dotnet run
 ```
 
 The result is a reusable, intelligent .NET application launcher that eliminates the need to manually configure `dotnet run --project <path>` for every project or repository while supporting multi-project solutions and the common `src`-based repository structure.
+
+---
+
+# 19. Package Versioning — `dnuget`
+
+Implemented after the runner itself, and built on the same discovery pass: the problem is the same
+shape. Publishing a package means opening a `.csproj`, finding `<Version>`, remembering that
+`<InformationalVersion>` and `<FileVersion>` sit next to it, and getting all of them right — in
+whichever project of the repository happens to be the packaged one.
+
+```text
+C:\Projects\XYZ> dnuget 1.2.14
+```
+
+`dnuget` is `DNRun.exe` under a second name: the installer writes a `dnuget.cmd` shim beside the
+executable, and `dnrun nuget <version>` is the same command spelled out. A copy of the executable
+renamed `dnuget.exe` behaves identically, because the entry point normalizes its own invocation
+name before parsing.
+
+## 19.1 Packable Project Detection
+
+The `dnrun` counterpart of §5, with a different question asked of the same parsed `.csproj`:
+
+- `IsPackable=false`, and test projects, are excluded outright.
+- A project that *asks* to be packaged — `IsPackable=true`, `PackageId`,
+  `GeneratePackageOnBuild`, or `PackAsTool` — is an explicit candidate.
+- When the repository has explicit candidates, only those are offered. Otherwise every remaining
+  project is offered, libraries first: a repository that publishes nothing explicitly is exactly
+  where guessing is wrong, so the menu appears instead.
+
+Selection, prompting, and persistence follow §6 and §7 unchanged, storing `packageProject` in
+`dnrun.config.json`. It is deliberately separate from `startupProject`: the application you run
+and the library you publish are rarely the same project.
+
+## 19.2 Version Source Resolution
+
+The file to edit is not always the project file:
+
+1. The `.csproj`, when it declares `PackageVersion`, `Version`, or `VersionPrefix`.
+2. Otherwise the nearest `Directory.Build.props` between the project and the repository root that
+   declares one — the shared-version layout every multi-package repository uses. Writing a
+   `<Version>` into the `.csproj` there would silently opt that project *out* of the shared
+   version rather than bumping it, so the props file is updated and the projects sharing it are
+   named first.
+3. Otherwise the `.csproj`, which gains a `<Version>`.
+
+## 19.3 Properties Written
+
+| Declared property | Written |
+|---|---|
+| `PackageVersion`, `Version` | Full version without `+metadata` |
+| `VersionPrefix` / `VersionSuffix` | Split; a stable release empties the suffix |
+| `InformationalVersion` | Full version including `+metadata` |
+| `AssemblyVersion`, `FileVersion` | Numeric, zero-filled to four parts |
+
+Only properties the project already declares are updated. Introducing `AssemblyVersion` where
+there was none would change what the build produces, which is more than the user asked for.
+
+## 19.4 Editing Strategy
+
+Version values are spliced into the original file text. The document is parsed — with line info —
+only to *locate* properties, because that is the part a regex gets wrong: a `<Version>` inside a
+`<PackageReference>` is not the project's version, and a declaration under a conditional
+`PropertyGroup` may not apply at all. Everything else about the file survives byte for byte:
+comments, indentation and tabs, blank lines, CRLF, and a BOM. Writes go through a temp file in the
+same directory, as §14.5 does for the config.
+
+Versions are validated before any file is opened — two to four numbers, optional `-prerelease`,
+optional `+metadata`, with a leading `v` forgiven — so a typo costs nothing and never reaches a
+project file.
+
+## 19.5 Command Surface
+
+```text
+dnuget <version>          Set the package version
+dnuget                    Show the package project and its declared version
+dnuget list               Every packable project with its current version
+dnuget select [version]   Choose a different package project, save it
+dnuget --all <version>    Version every packable project; shared files written once
+dnuget reset              Forget the saved package project
+```
+
+Exit codes follow §5 of the plan, with one addition: `5` when a project file could not be
+rewritten.

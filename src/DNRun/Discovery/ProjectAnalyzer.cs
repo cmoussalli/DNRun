@@ -36,6 +36,7 @@ internal static class ProjectAnalyzer
             return new ProjectInfo(name, absolute, relative, IsRunnable: false, ProjectKind.Unknown, null, null)
             {
                 AnalysisWarning = "could not be parsed (" + FirstLine(ex.Message) + ")",
+                IsPackable = false,
             };
         }
 
@@ -45,6 +46,7 @@ internal static class ProjectAnalyzer
             return new ProjectInfo(name, absolute, relative, IsRunnable: false, ProjectKind.Unknown, null, null)
             {
                 AnalysisWarning = "is empty",
+                IsPackable = false,
             };
         }
 
@@ -61,7 +63,31 @@ internal static class ProjectAnalyzer
         var kind = Classify(name, sdk, outputType, isTest);
         var runnable = !isTest && IsRunnableProject(sdk, outputType, packageReferences);
 
-        return new ProjectInfo(name, absolute, relative, runnable, kind, sdk, outputType);
+        // Packaging facts (spec: dnuget). `dotnet pack` happily packs anything that does not opt
+        // out, so "packable" is the absence of a refusal, while "packages explicitly" is the
+        // stronger signal used to decide which projects to offer first.
+        var isPackableProperty = ReadBool(LastPropertyValue(root, "IsPackable"));
+        var packageId = LastPropertyValue(root, "PackageId");
+        var packable = isPackableProperty ?? !isTest;
+        var explicitlyPackages = packable
+            && (isPackableProperty == true
+                || packageId is not null
+                || ReadBool(LastPropertyValue(root, "GeneratePackageOnBuild")) == true
+                || ReadBool(LastPropertyValue(root, "PackAsTool")) == true);
+
+        var version = LastPropertyValue(root, "PackageVersion")
+            ?? LastPropertyValue(root, "Version")
+            ?? Packaging.NuGetVersion.Combine(
+                LastPropertyValue(root, "VersionPrefix"),
+                LastPropertyValue(root, "VersionSuffix"));
+
+        return new ProjectInfo(name, absolute, relative, runnable, kind, sdk, outputType)
+        {
+            IsPackable = packable,
+            PackagesExplicitly = explicitlyPackages,
+            PackageId = packageId,
+            DeclaredVersion = version,
+        };
     }
 
     private static bool IsRunnableProject(string? sdk, string? outputType, IReadOnlyList<string> packageReferences)

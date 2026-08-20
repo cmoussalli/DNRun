@@ -72,9 +72,27 @@ internal static class ConfigurationManager
     public static ConfigValidation Validate(
         DNRunConfig? config,
         string repositoryRoot,
-        IReadOnlyList<ProjectInfo> discovered)
+        IReadOnlyList<ProjectInfo> discovered) =>
+        Validate(config?.StartupProject, repositoryRoot, discovered, p => p.IsRunnable);
+
+    /// <summary>Matches the configured package project against the discovered candidates.</summary>
+    public static ConfigValidation ValidatePackageProject(
+        DNRunConfig? config,
+        string repositoryRoot,
+        IReadOnlyList<ProjectInfo> discovered) =>
+        Validate(config?.PackageProject, repositoryRoot, discovered, p => p.IsPackable);
+
+    /// <summary>
+    /// Shared validation for both saved selections. <paramref name="eligible"/> is what makes a
+    /// project usable for the command at hand - runnable for <c>dnrun</c>, packable for
+    /// <c>dnuget</c> - and a project that fails it yields <see cref="ConfigState.NotRunnable"/>.
+    /// </summary>
+    private static ConfigValidation Validate(
+        string? configured,
+        string repositoryRoot,
+        IReadOnlyList<ProjectInfo> discovered,
+        Func<ProjectInfo, bool> eligible)
     {
-        var configured = config?.StartupProject;
         if (string.IsNullOrWhiteSpace(configured))
         {
             return new ConfigValidation(ConfigState.NotConfigured, null, null);
@@ -89,7 +107,7 @@ internal static class ConfigurationManager
             if (File.Exists(absolute))
             {
                 var analyzed = ProjectAnalyzer.Analyze(absolute, repositoryRoot);
-                return analyzed.IsRunnable
+                return eligible(analyzed)
                     ? new ConfigValidation(ConfigState.Valid, analyzed, configured)
                     : new ConfigValidation(ConfigState.NotRunnable, analyzed, configured);
             }
@@ -97,7 +115,7 @@ internal static class ConfigurationManager
             return new ConfigValidation(ConfigState.Missing, null, configured);
         }
 
-        return match.IsRunnable
+        return eligible(match)
             ? new ConfigValidation(ConfigState.Valid, match, configured)
             : new ConfigValidation(ConfigState.NotRunnable, match, configured);
     }
@@ -111,6 +129,11 @@ internal static class ConfigurationManager
         if (config.StartupProject is not null)
         {
             config.StartupProject = config.StartupProject.Replace('\\', '/');
+        }
+
+        if (config.PackageProject is not null)
+        {
+            config.PackageProject = config.PackageProject.Replace('\\', '/');
         }
 
         var path = ConfigPath(repositoryRoot);

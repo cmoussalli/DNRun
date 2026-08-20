@@ -25,7 +25,7 @@ internal sealed class DNRunSession
 
     public RepositoryContext Context { get; }
 
-    public DNRunConfig? Config { get; }
+    public DNRunConfig? Config { get; private set; }
 
     /// <summary>True when a config file exists but could not be parsed; it must not be overwritten silently.</summary>
     public bool ConfigUnreadable { get; }
@@ -33,6 +33,27 @@ internal sealed class DNRunSession
     public DiscoveryResult Discovery { get; private set; }
 
     public IReadOnlyList<ProjectInfo> Runnable => Discovery.RunnableProjects;
+
+    /// <summary>
+    /// Projects <c>dnuget</c> can version, best candidate first: the ones that ask to be packaged,
+    /// then libraries, then everything else that has not opted out. Projects only ever reach the
+    /// tail of this list when the repository publishes nothing explicitly, which is exactly when
+    /// guessing would be wrong - so the menu shows them rather than picking one.
+    /// </summary>
+    public IReadOnlyList<ProjectInfo> Packable
+    {
+        get
+        {
+            var packable = Discovery.AllProjects.Where(p => p.IsPackable).ToArray();
+            var declared = packable.Where(p => p.PackagesExplicitly).ToArray();
+
+            return (declared.Length > 0 ? declared : packable)
+                .OrderBy(p => p.PackagesExplicitly ? 0 : 1)
+                .ThenBy(p => p.Kind == ProjectKind.Library ? 0 : 1)
+                .ThenBy(p => p.Name, StringComparer.Ordinal)
+                .ToArray();
+        }
+    }
 
     public string RepositoryRoot => Context.RepositoryRoot;
 
@@ -67,10 +88,21 @@ internal sealed class DNRunSession
     }
 
     /// <summary>Persists a new startup project, preserving any other settings already in the file.</summary>
-    public void SaveStartupProject(ProjectInfo project)
+    public void SaveStartupProject(ProjectInfo project) =>
+        Save(config => config.StartupProject = project.RelativePath);
+
+    /// <summary>Persists the project whose package version <c>dnuget</c> updates.</summary>
+    public void SavePackageProject(ProjectInfo project) =>
+        Save(config => config.PackageProject = project.RelativePath);
+
+    /// <summary>Forgets the saved package project, leaving every other setting in place.</summary>
+    public void ClearPackageProject() => Save(config => config.PackageProject = null);
+
+    private void Save(Action<DNRunConfig> mutate)
     {
         var config = Config ?? new DNRunConfig();
-        config.StartupProject = project.RelativePath;
+        mutate(config);
+        Config = config;
 
         try
         {
@@ -78,7 +110,7 @@ internal sealed class DNRunSession
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Failing to remember the choice must not stop the app from starting.
+            // Failing to remember the choice must not stop the command from doing its job.
             Output.Warn($"could not write {ConfigurationManager.ConfigPath(RepositoryRoot)} ({ex.Message})");
         }
     }

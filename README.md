@@ -23,6 +23,16 @@ actually runnable, asks once when there is more than one, and remembers the answ
 `dnrun.config.json` at the repository root. It is installed once, outside your projects, and
 never copied into them.
 
+The same discovery drives `dnuget`, which sets the version of the NuGet package the repository
+publishes:
+
+```text
+C:\Projects\XYZ> dnuget 1.2.14
+```
+
+instead of opening the `.csproj` and editing `<Version>` (and `<InformationalVersion>`, and
+`<FileVersion>`) by hand.
+
 **New here?** [USER_GUIDE.md](USER_GUIDE.md) walks through installing it, everyday use, Orca
 setup, and troubleshooting. The rest of this file is the short version plus development notes.
 
@@ -35,8 +45,8 @@ irm https://raw.githubusercontent.com/cmoussalli/DNRun/main/install.ps1 | iex
 ```
 
 That downloads `DNRun.exe` from the latest release into `%LOCALAPPDATA%\Programs\DNRun`, verifies its
-SHA256, and adds that directory to your user PATH. If no release binary is available it builds from
-source instead, which needs the .NET 10 SDK.
+SHA256, writes a one-line `dnuget.cmd` beside it, and adds that directory to your user PATH. If no
+release binary is available it builds from source instead, which needs the .NET 10 SDK.
 
 Open a new terminal, then from any .NET repository:
 
@@ -67,6 +77,15 @@ dnrun list
 | `dnrun reset` | Forget the saved startup project. |
 | `dnrun -- <args>` | Run, forwarding `<args>` to the application. |
 | `dnrun --help`, `dnrun version` | Usage and version. |
+| `dnuget <version>` | Set the version of the NuGet package to be published. |
+| `dnuget` | Show the package project and the version it currently declares. |
+| `dnuget list` | List every packable project with its current version. |
+| `dnuget select <version>` | Choose a different package project, save it, and set the version. |
+| `dnuget --all <version>` | Set the version on every packable project. |
+| `dnuget reset` | Forget the saved package project. |
+
+`dnuget` and `dnrun nuget` are the same command: `dnuget.cmd` is a shim the installer writes next
+to `DNRun.exe`.
 
 
 
@@ -83,6 +102,7 @@ app opens resolve against the root, exactly as they would for `dotnet run` typed
 | `2` | Bad usage, or several candidates with no terminal attached to ask on. |
 | `3` | `dotnet` is not on PATH, or the process could not be started. |
 | `4` | The configuration file exists but is unusable. |
+| `5` | A project file could not be rewritten with the new package version. |
 
 ---
 
@@ -118,6 +138,53 @@ libraries, Razor class libraries, and test projects are excluded — modern test
 
 ---
 
+## Versioning the package (`dnuget`)
+
+```text
+C:\Projects\XYZ> dnuget 1.2.14
+
+DNRun - Intelligent .NET Project Runner
+
+Package project:
+  XYZ.Core
+
+Updated src/XYZ.Core/XYZ.Core.csproj:
+  Version               1.0.3 -> 1.2.14
+  InformationalVersion  1.0.3 -> 1.2.14
+  AssemblyVersion       1.0.3.0 -> 1.2.14.0
+
+XYZ.Core will now publish as 1.2.14.
+```
+
+**Which project.** The same discovery pass as `dnrun`, filtered differently: a project is packable
+unless it says `<IsPackable>false</IsPackable>` or is a test project. Projects that *ask* to be
+packaged - `IsPackable`, `PackageId`, `GeneratePackageOnBuild`, or `PackAsTool` - are the only ones
+offered when any of them exists; otherwise every remaining project is offered, libraries first.
+With several candidates you are asked once and the answer is saved as `packageProject`, exactly as
+`startupProject` is saved for running. The two are independent: the app you run and the library you
+publish are rarely the same project.
+
+**Which properties.** Whichever the project already declares - `PackageVersion`, `Version`, or
+`VersionPrefix`/`VersionSuffix` - plus `InformationalVersion`, `AssemblyVersion`, and `FileVersion`
+when they are present. `AssemblyVersion` and `FileVersion` take only numbers, so `2.0.0-rc.1`
+becomes `2.0.0.0` there. Properties the project does not declare are never introduced, except that
+a project declaring no version at all gets a `<Version>`.
+
+**Which file.** The `.csproj`, unless the version is inherited from a `Directory.Build.props`
+between the project and the repository root - then that file is rewritten instead, and the other
+packable projects sharing it are named before the change is made. Writing `<Version>` into the
+`.csproj` there would silently opt one project out of the shared version instead of bumping it.
+
+**Versions** are 2 to 4 numbers, an optional `-prerelease`, and an optional `+metadata`:
+`1.2.14`, `1.2.14.3`, `1.3.0-beta.1`, `2.0.0-rc.2+build.57`. A leading `v` is accepted. Anything
+else is refused before a file is opened, so a typo costs nothing.
+
+Edits are surgical: comments, indentation, tabs, CRLF, and a BOM all survive, and a
+`<Version>` element inside a `<PackageReference>` is never mistaken for the project's own. The
+write goes through a temp file in the same directory, so an interruption cannot truncate a project.
+
+---
+
 ## Configuration
 
 `dnrun.config.json`, written at the repository root the first time you choose between several
@@ -136,10 +203,14 @@ does not invalidate them. Two optional settings:
 ```json
 {
   "startupProject": "src/XYZ.Web/XYZ.Web.csproj",
+  "packageProject": "src/XYZ.Core/XYZ.Core.csproj",
   "ignoreDirectories": ["samples", "legacy"],
   "runnableProjects": ["src/Odd/Odd.csproj"]
 }
 ```
+
+`packageProject` is the project `dnuget` versions, saved the first time you choose between
+several.
 
 `runnableProjects` is an escape hatch. DNRun reads `.csproj` files directly and does **not**
 evaluate MSBuild, so a project whose `OutputType` is set in a `Directory.Build.props` looks like a
@@ -177,7 +248,7 @@ prints the candidates and exits with code `2` rather than hanging on a read no o
 ## Development
 
 ```powershell
-dotnet test                    # 110 tests, no network or process launching required
+dotnet test                    # 221 tests, no network or process launching required
 ./build/publish.ps1            # tests + AOT publish
 ```
 

@@ -29,6 +29,9 @@ internal static class CommandRouter
             case Verb.Version:
                 Console.WriteLine("dnrun " + Version);
                 return ExitCodes.Success;
+
+            case Verb.Nuget:
+                return ExecuteNuget(parsed.Forwarded, workingDirectory);
         }
 
         var session = DNRunSession.Create(workingDirectory);
@@ -42,6 +45,31 @@ internal static class CommandRouter
             Verb.Reset => ResetCommand.Execute(session),
             _ => ExitCodes.UsageError,
         };
+    }
+
+    /// <summary>
+    /// The version is validated before the repository is touched, so a typo costs nothing and
+    /// '--help' never pays for a discovery pass.
+    /// </summary>
+    private static int ExecuteNuget(IReadOnlyList<string> args, string workingDirectory)
+    {
+        var request = NugetRequest.Parse(args);
+
+        if (request.Error is not null)
+        {
+            Output.Error(request.Error);
+            Output.Blank();
+            PrintNugetUsage();
+            return ExitCodes.UsageError;
+        }
+
+        if (request.Action == NugetAction.Help)
+        {
+            PrintNugetUsage();
+            return ExitCodes.Success;
+        }
+
+        return NugetCommand.Execute(DNRunSession.Create(workingDirectory), request);
     }
 
     public static string Version =>
@@ -62,6 +90,7 @@ internal static class CommandRouter
         Output.Line("  dnrun list            Show the solution, runnable projects, and current selection");
         Output.Line("  dnrun config          Show the resolved root, config file, and effective settings");
         Output.Line("  dnrun reset           Forget the saved startup project");
+        Output.Line("  dnuget 1.2.14         Set the version of the NuGet package this repo publishes");
         Output.Line("  dnrun --help          Show this help");
         Output.Line("  dnrun version         Show the version");
         Output.Blank();
@@ -72,5 +101,32 @@ internal static class CommandRouter
         Output.Line("  dnrun.config.json at the repository root records the chosen startup project.");
         Output.Line("  Discovery starts from the current working directory, never from DNRun.exe's");
         Output.Line("  own location, so one installation serves every repository.");
+    }
+
+    private static void PrintNugetUsage()
+    {
+        Output.Banner();
+        Output.Blank();
+        Output.Line("Sets the version of the NuGet package this repository publishes, using the same");
+        Output.Line("project discovery as 'dnrun'. 'dnuget' and 'dnrun nuget' are the same command.");
+        Output.Blank();
+        Output.Label("Usage:");
+        Output.Line("  dnuget 1.2.14         Set the package version of the saved package project");
+        Output.Line("  dnuget                Show the package project and the version it declares");
+        Output.Line("  dnuget list           List every packable project with its current version");
+        Output.Line("  dnuget select 1.2.14  Choose a different package project, save it, and set the version");
+        Output.Line("  dnuget --all 1.2.14   Set the version on every packable project");
+        Output.Line("  dnuget reset          Forget the saved package project");
+        Output.Line("  dnuget --help         Show this help");
+        Output.Blank();
+        Output.Label("Versions:");
+        Output.Line("  2 to 4 numbers, an optional prerelease label, an optional +metadata:");
+        Output.Line("  1.2.14, 1.2.14.3, 1.3.0-beta.1, 2.0.0-rc.2+build.57. A leading 'v' is accepted.");
+        Output.Blank();
+        Output.Label("What gets written:");
+        Output.Line("  The project's own <Version> (or <PackageVersion>, or <VersionPrefix>/<VersionSuffix>),");
+        Output.Line("  plus <InformationalVersion>, <AssemblyVersion>, and <FileVersion> when the project");
+        Output.Line("  already declares them. When the version comes from Directory.Build.props, that");
+        Output.Line("  file is updated instead — and the projects sharing it are named first.");
     }
 }
