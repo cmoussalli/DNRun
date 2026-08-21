@@ -9,8 +9,8 @@
     <StripSymbols>true</StripSymbols>
     <IsAotCompatible>true</IsAotCompatible>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
-    <Version>1.1.0</Version>
-    <InformationalVersion>1.1.0</InformationalVersion>
+    <Version>1.1.1</Version>
+    <InformationalVersion>1.1.1</InformationalVersion>
     <Product>DNRun</Product>
     <Description>Intelligent .NET project runner</Description>
   </PropertyGroup>

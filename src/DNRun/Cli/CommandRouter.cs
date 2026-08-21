@@ -75,7 +75,7 @@ internal static class CommandRouter
     public static string Version =>
         typeof(CommandRouter).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0]
-        ?? "1.1.0";
+        ?? "1.1.1";
 
     private static void PrintUsage()
     {
