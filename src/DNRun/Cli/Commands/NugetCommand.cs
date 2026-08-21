@@ -7,9 +7,11 @@ namespace DNRun.Cli.Commands;
 
 /// <summary>
 /// <c>dnuget [version]</c> — the packaging counterpart of <c>dnrun</c>. Discovery works exactly as
-/// it does for running: find the projects in this repository, work out which ones produce a NuGet
-/// package, ask once when there is more than one, and remember the answer in dnrun.config.json.
-/// The only difference is what happens next — a project file is rewritten instead of launched.
+/// it does for running: find the projects in this repository and work out which ones produce a
+/// NuGet package. What happens next is deliberately the opposite of <c>dnrun</c>: running is about
+/// one application, so it asks which one; versioning is about the release, so a version applies to
+/// every packable project at once and nothing is asked. <c>dnuget select</c> is the escape hatch
+/// for the rare repository where one package is versioned apart from the others.
 /// </summary>
 internal static class NugetCommand
 {
@@ -22,19 +24,50 @@ internal static class NugetCommand
         {
             NugetAction.List => List(session),
             NugetAction.Reset => Reset(session),
-            NugetAction.Set when request.AllProjects => SetAll(session, request.Version!),
-            NugetAction.Set => Set(session, request),
+            NugetAction.Set when request.ForceSelection => SetSelected(session, request.Version!),
+            NugetAction.Set => SetAll(session, request.Version!),
             _ => Show(session, request),
         };
     }
 
-    /// <summary>No version given: report what would be published today, and from which file.</summary>
+    /// <summary>
+    /// No version given: report what would be published today, and from which file. Nothing is
+    /// asked here either — with several packable projects the whole list is printed instead.
+    /// </summary>
     private static int Show(DNRunSession session, NugetRequest request)
     {
-        var project = Resolve(session, request.ForceSelection, out var failureCode);
-        if (project is null)
+        ProjectInfo? project;
+
+        if (request.ForceSelection)
         {
-            return failureCode;
+            project = Choose(session, out var failureCode);
+            if (project is null)
+            {
+                return failureCode;
+            }
+
+            session.SavePackageProject(project);
+        }
+        else
+        {
+            project = SavedProject(session);
+
+            if (project is null)
+            {
+                var candidates = session.Packable;
+
+                if (candidates.Count == 0)
+                {
+                    return ReportNothingFound(session);
+                }
+
+                if (candidates.Count > 1)
+                {
+                    return List(session);
+                }
+
+                project = candidates[0];
+            }
         }
 
         var source = VersionUpdater.Resolve(project, session.RepositoryRoot);
@@ -49,25 +82,10 @@ internal static class NugetCommand
         return ExitCodes.Success;
     }
 
-    private static int Set(DNRunSession session, NugetRequest request)
-    {
-        var project = Resolve(session, request.ForceSelection, out var failureCode);
-        if (project is null)
-        {
-            return failureCode;
-        }
-
-        PrintProject(project);
-
-        var source = VersionUpdater.Resolve(project, session.RepositoryRoot);
-        WarnAboutSharedSource(session, project, source);
-
-        return Write(session, source, request.Version!, project.Name) ? ExitCodes.Success : ExitCodes.VersionUpdateFailed;
-    }
-
     /// <summary>
-    /// <c>--all</c>: version every packable project in one go. Projects sharing a
-    /// Directory.Build.props are grouped so the shared file is rewritten once, not once per project.
+    /// The default for <c>dnuget 1.2.14</c>: version every packable project in one go, so the
+    /// repository releases as one thing. Projects sharing a Directory.Build.props are grouped so
+    /// the shared file is rewritten once, not once per project.
     /// </summary>
     private static int SetAll(DNRunSession session, NuGetVersion version)
     {
@@ -75,6 +93,11 @@ internal static class NugetCommand
         if (projects.Count == 0)
         {
             return ReportNothingFound(session);
+        }
+
+        if (projects.Count == 1)
+        {
+            return SetOne(session, projects[0], version);
         }
 
         Output.Label($"Package projects ({projects.Count}):");
@@ -100,6 +123,29 @@ internal static class NugetCommand
         }
 
         return failed ? ExitCodes.VersionUpdateFailed : ExitCodes.Success;
+    }
+
+    /// <summary><c>dnuget select 1.2.14</c>: pick one project from the menu and version only that one.</summary>
+    private static int SetSelected(DNRunSession session, NuGetVersion version)
+    {
+        var project = Choose(session, out var failureCode);
+        if (project is null)
+        {
+            return failureCode;
+        }
+
+        session.SavePackageProject(project);
+        return SetOne(session, project, version);
+    }
+
+    private static int SetOne(DNRunSession session, ProjectInfo project, NuGetVersion version)
+    {
+        PrintProject(project);
+
+        var source = VersionUpdater.Resolve(project, session.RepositoryRoot);
+        WarnAboutSharedSource(session, project, source);
+
+        return Write(session, source, version, project.Name) ? ExitCodes.Success : ExitCodes.VersionUpdateFailed;
     }
 
     private static int List(DNRunSession session)
@@ -139,6 +185,12 @@ internal static class NugetCommand
             Output.Line($"      {Output.Dim(project.RelativePath)}");
         }
 
+        if (projects.Count > 1)
+        {
+            Output.Blank();
+            Output.Line("One version for all of them:  " + Output.Cyan("dnuget 1.2.14"));
+        }
+
         PrintSavedProject(session);
         return ExitCodes.Success;
     }
@@ -155,7 +207,7 @@ internal static class NugetCommand
         session.ClearPackageProject();
 
         Output.Line($"Forgot the package project ({previous}).");
-        Output.Line("The next 'dnuget' will ask again.");
+        Output.Line("The next 'dnuget select' will ask again.");
         return ExitCodes.Success;
     }
 
@@ -194,37 +246,40 @@ internal static class NugetCommand
         return true;
     }
 
+    /// <summary>The saved package project, when it still checks out. Never prompts.</summary>
+    private static ProjectInfo? SavedProject(DNRunSession session)
+    {
+        var validation = ConfigurationManager.ValidatePackageProject(
+            session.Config,
+            session.RepositoryRoot,
+            session.Discovery.AllProjects);
+
+        switch (validation.State)
+        {
+            case ConfigState.Valid:
+                return validation.Project;
+
+            case ConfigState.Missing:
+                Output.Warn($"the configured package project '{validation.ConfiguredPath}' no longer exists.");
+                Output.Blank();
+                break;
+
+            case ConfigState.NotRunnable:
+                Output.Warn($"the configured package project '{validation.ConfiguredPath}' is no longer packable.");
+                Output.Blank();
+                break;
+        }
+
+        return null;
+    }
+
     /// <summary>
-    /// The saved package project when it still checks out, otherwise the discovery + prompt flow
-    /// (spec §6 Scenario A/B/C, applied to packable projects).
+    /// The menu, reached only when the user asked for it with <c>select</c> (spec §6 Scenario C,
+    /// applied to packable projects). Setting a version never comes through here.
     /// </summary>
-    private static ProjectInfo? Resolve(DNRunSession session, bool forceSelection, out int failureCode)
+    private static ProjectInfo? Choose(DNRunSession session, out int failureCode)
     {
         failureCode = ExitCodes.Success;
-
-        if (!forceSelection)
-        {
-            var validation = ConfigurationManager.ValidatePackageProject(
-                session.Config,
-                session.RepositoryRoot,
-                session.Discovery.AllProjects);
-
-            switch (validation.State)
-            {
-                case ConfigState.Valid:
-                    return validation.Project;
-
-                case ConfigState.Missing:
-                    Output.Warn($"the configured package project '{validation.ConfiguredPath}' no longer exists.");
-                    Output.Blank();
-                    break;
-
-                case ConfigState.NotRunnable:
-                    Output.Warn($"the configured package project '{validation.ConfiguredPath}' is no longer packable.");
-                    Output.Blank();
-                    break;
-            }
-        }
 
         var candidates = session.Packable;
         if (candidates.Count == 0)
@@ -233,12 +288,7 @@ internal static class NugetCommand
             return null;
         }
 
-        if (candidates.Count == 1 && !forceSelection)
-        {
-            return candidates[0];
-        }
-
-        Output.Line(forceSelection ? "Packable projects:" : "Multiple packable projects found:");
+        Output.Line("Packable projects:");
         Output.Blank();
         PrintNumberedList(session, candidates);
         Output.Blank();
@@ -248,9 +298,9 @@ internal static class NugetCommand
         switch (result.Outcome)
         {
             case PromptOutcome.NonInteractive:
-                Output.Error("multiple packable projects found and no interactive terminal is attached.");
-                Output.Line("Run 'dnuget select' from a terminal to choose one,");
-                Output.Line($"or set \"packageProject\" in {ConfigurationManager.ConfigPath(session.RepositoryRoot)}.");
+                Output.Error("choosing a package project needs an interactive terminal.");
+                Output.Line("Run 'dnuget <version>' to version every packable project instead,");
+                Output.Line("or run 'dnuget select' from a terminal.");
                 failureCode = ExitCodes.UsageError;
                 return null;
 
@@ -260,7 +310,6 @@ internal static class NugetCommand
                 return null;
         }
 
-        session.SavePackageProject(result.Project!);
         return result.Project;
     }
 
@@ -295,7 +344,7 @@ internal static class NugetCommand
     /// <summary>
     /// A version declared in Directory.Build.props belongs to every project under it, so bumping
     /// one project there quietly bumps the others. Say so instead of surprising the user at
-    /// pack time.
+    /// pack time. Only the single-project paths need this — versioning everything says so already.
     /// </summary>
     private static void WarnAboutSharedSource(DNRunSession session, ProjectInfo project, VersionSource source)
     {
@@ -322,25 +371,35 @@ internal static class NugetCommand
         Output.Blank();
     }
 
+    /// <summary>
+    /// Only shown when something is saved: the choice steers 'dnuget' on its own and
+    /// 'dnuget select', never a version, so an empty setting is not worth a line.
+    /// </summary>
     private static void PrintSavedProject(DNRunSession session)
     {
-        Output.Blank();
-        Output.Label("Current package project:");
+        if (session.Config?.PackageProject is null)
+        {
+            return;
+        }
 
         var validation = ConfigurationManager.ValidatePackageProject(
             session.Config,
             session.RepositoryRoot,
             session.Discovery.AllProjects);
 
+        Output.Blank();
+        Output.Label("Saved package project:");
+
         var message = validation.State switch
         {
             ConfigState.Valid => "  " + validation.Project!.Name,
-            ConfigState.Missing => $"  {validation.ConfiguredPath} " + Output.Dim("(missing — will be re-selected)"),
-            ConfigState.NotRunnable => $"  {validation.ConfiguredPath} " + Output.Dim("(no longer packable — will be re-selected)"),
-            _ => "  " + Output.Dim("(none — will be chosen on the next 'dnuget')"),
+            ConfigState.Missing => $"  {validation.ConfiguredPath} " + Output.Dim("(missing)"),
+            ConfigState.NotRunnable => $"  {validation.ConfiguredPath} " + Output.Dim("(no longer packable)"),
+            _ => "  " + Output.Dim("(none)"),
         };
 
         Output.Line(message);
+        Output.Line(Output.Dim("  Shown by 'dnuget' on its own; a version still applies to every project."));
     }
 
     private static int ReportNothingFound(DNRunSession session)

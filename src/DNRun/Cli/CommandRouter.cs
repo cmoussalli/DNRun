@@ -90,7 +90,7 @@ internal static class CommandRouter
         Output.Line("  dnrun list            Show the solution, runnable projects, and current selection");
         Output.Line("  dnrun config          Show the resolved root, config file, and effective settings");
         Output.Line("  dnrun reset           Forget the saved startup project");
-        Output.Line("  dnuget 1.2.14         Set the version of the NuGet package this repo publishes");
+        Output.Line("  dnuget 1.2.14         Set the NuGet package version of every packable project");
         Output.Line("  dnrun --help          Show this help");
         Output.Line("  dnrun version         Show the version");
         Output.Blank();
@@ -107,16 +107,18 @@ internal static class CommandRouter
     {
         Output.Banner();
         Output.Blank();
-        Output.Line("Sets the version of the NuGet package this repository publishes, using the same");
-        Output.Line("project discovery as 'dnrun'. 'dnuget' and 'dnrun nuget' are the same command.");
+        Output.Line("Sets the NuGet package version for this repository, using the same project");
+        Output.Line("discovery as 'dnrun'. A version applies to every packable project, so a repo with");
+        Output.Line("several packages releases as one thing and you are never asked to choose.");
+        Output.Line("'dnuget' and 'dnrun nuget' are the same command.");
         Output.Blank();
         Output.Label("Usage:");
-        Output.Line("  dnuget 1.2.14         Set the package version of the saved package project");
-        Output.Line("  dnuget                Show the package project and the version it declares");
+        Output.Line("  dnuget 1.2.14         Set the package version of every packable project");
+        Output.Line("  dnuget                Show the packable projects and the versions they declare");
         Output.Line("  dnuget list           List every packable project with its current version");
-        Output.Line("  dnuget select 1.2.14  Choose a different package project, save it, and set the version");
-        Output.Line("  dnuget --all 1.2.14   Set the version on every packable project");
-        Output.Line("  dnuget reset          Forget the saved package project");
+        Output.Line("  dnuget select 1.2.14  Version one chosen project instead of all of them");
+        Output.Line("  dnuget --all 1.2.14   The default, said explicitly");
+        Output.Line("  dnuget reset          Forget the project chosen by 'dnuget select'");
         Output.Line("  dnuget --help         Show this help");
         Output.Blank();
         Output.Label("Versions:");

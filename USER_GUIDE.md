@@ -298,7 +298,8 @@ Usage text and version. `help`, `-h`, and `-?` all work; so does `--version`.
 
 ### `dnuget <version>`
 
-Set the version of the NuGet package the repository publishes. See
+Set the version of every NuGet package the repository publishes - one version, no question
+asked. See
 [Versioning your NuGet package](#6-versioning-your-nuget-package) for the whole story; the short
 version is `dnuget 1.2.14`.
 
@@ -332,7 +333,7 @@ paths it opens behave the same no matter which subdirectory you invoked `dnrun` 
 
 ## 6. Versioning your NuGet package
 
-If the repository publishes a package, `dnuget` sets its version without you opening a `.csproj`:
+If the repository publishes packages, `dnuget` sets their version without you opening a `.csproj`:
 
 ```powershell
 dnuget 1.2.14
@@ -358,13 +359,13 @@ Nothing is built or pushed. The next `dotnet pack` or `dotnet publish` picks the
 
 | Command | What it does |
 |---|---|
-| `dnuget <version>` | Set the package version. Asks which project the first time, then remembers. |
-| `dnuget` | Show the package project and the version it declares today. Writes nothing. |
+| `dnuget <version>` | Set that version on every packable project. Never asks. |
+| `dnuget` | Show the packable projects and the versions they declare today. Writes nothing. |
 | `dnuget list` | Every packable project with its current version. |
-| `dnuget select` | Choose a different package project and save it. |
-| `dnuget select <version>` | Choose a different project and set its version in one go. |
-| `dnuget --all <version>` | Set the version on every packable project. |
-| `dnuget reset` | Forget the saved package project. |
+| `dnuget select` | Choose one package project and save it. Asks. |
+| `dnuget select <version>` | Choose one project and version only that one. Asks. |
+| `dnuget --all <version>` | The default, said explicitly. |
+| `dnuget reset` | Forget the project chosen by `dnuget select`. |
 | `dnuget --help` | Usage. |
 
 ### Which versions are accepted
@@ -380,19 +381,37 @@ A leading `v` is accepted, so `dnuget v1.2.14` works if that is the habit from t
 that would not restore - `1.2.x`, `next`, `1.2.14-` - is refused before any file is opened, so a
 typo costs nothing.
 
-### Which project it picks
+### Which projects it changes
+
+All of them. This is the one place `dnuget` deliberately differs from `dnrun`: running is about a
+single application, so `dnrun` asks which one; publishing is about the release, so the version you
+pass is written to every packable project and nothing is asked.
 
 The same discovery as `dnrun`, filtered for packaging instead of running:
 
-- Projects with `<IsPackable>false</IsPackable>`, and test projects, are never offered.
+- Projects with `<IsPackable>false</IsPackable>`, and test projects, are never touched.
 - Projects that ask to be packaged - `IsPackable`, `PackageId`, `GeneratePackageOnBuild`, or
-  `PackAsTool` - are the only ones offered when the repository has any.
-- Otherwise every remaining project is offered, libraries first.
+  `PackAsTool` - are the only ones taken when the repository has any.
+- Otherwise every remaining project is taken, libraries first.
 
-With one candidate it just works. With several you are asked once, and the answer is saved as
-`packageProject` in `dnrun.config.json`. That is separate from `startupProject`: the app you run
-and the library you publish are usually different projects, and `dnuget` never changes which
-project `dnrun` runs.
+`dnuget list` shows exactly which projects that is, before you set anything. Projects sharing a
+`Directory.Build.props` have it rewritten once, not once per project.
+
+### Versioning one project on its own
+
+When one package has to move apart from the rest:
+
+```powershell
+dnuget select 1.2.14
+```
+
+You are shown the packable projects with their current versions, you pick one, and only that
+project is versioned. The choice is saved as `packageProject` in `dnrun.config.json`, which is what
+plain `dnuget` reports afterwards - it does not narrow what `dnuget <version>` writes. `dnuget
+reset` forgets it.
+
+`packageProject` is separate from `startupProject`: the app you run and the library you publish are
+usually different projects, and `dnuget` never changes which project `dnrun` runs.
 
 ### Which properties it writes
 
@@ -412,8 +431,9 @@ that declares no version at all, which gets a `<Version>`.
 ### When the version lives in `Directory.Build.props`
 
 Repositories that publish several packages together usually declare the version once, in a
-`Directory.Build.props` above the projects. `dnuget` follows it there and updates that file, saying
-so first:
+`Directory.Build.props` above the projects. `dnuget` follows it there and updates that file - once,
+however many projects inherit it. On the single-project paths (`dnuget select`, or a repository
+with exactly one packable project) it says so before writing:
 
 ```text
 The version is declared in Directory.Build.props, so it is updated there.
@@ -462,7 +482,7 @@ You can edit the file by hand. Three optional settings are available:
 | Setting | What it does |
 |---|---|
 | `startupProject` | The project `dnrun` runs. Repository-relative path. |
-| `packageProject` | The project `dnuget` versions. Repository-relative path. |
+| `packageProject` | The project `dnuget select` last chose. Repository-relative path. `dnuget <version>` ignores it and versions every packable project. |
 | `ignoreDirectories` | Extra directory names to skip while scanning, on top of the built-in list. |
 | `runnableProjects` | Force these projects into the candidate list even if DNRun classified them as libraries. Accepts a repository-relative path or a bare project name. |
 
@@ -649,15 +669,15 @@ the warning is easy to miss above the application output.
 before the command existed. Re-run the installer; it rewrites the shim every time.
 `dnrun nuget 1.2.14` works in the meantime, and is exactly the same command.
 
-### `dnuget` picked the wrong project
+### `dnuget` versioned more projects than I expected
 
-```powershell
-dnuget select 1.2.14
-```
+That is the design: one version for the whole repository. Run `dnuget list` to see exactly which
+projects count as packable before you set anything, and use `dnuget select 1.2.14` when you really
+do want a single project versioned on its own.
 
-Pick the right one; the choice replaces the saved `packageProject`. If the project you want is not
-even listed, it is opting out with `<IsPackable>false</IsPackable>`, or it looks like a test
-project. `dnuget list` shows what was found.
+If a project is being versioned that should not be, mark it `<IsPackable>false</IsPackable>`.
+If one you want is missing from `dnuget list`, it is already opting out that way, or it looks like
+a test project.
 
 ### `dnuget` changed `Directory.Build.props` instead of my `.csproj`
 

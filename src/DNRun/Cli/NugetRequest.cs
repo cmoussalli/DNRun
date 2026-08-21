@@ -46,6 +46,8 @@ internal sealed record NugetRequest(
                 case "--help" or "-h" or "-?" or "/?" or "help":
                     return new NugetRequest(NugetAction.Help);
 
+                // The default already covers every packable project; the flag stays as the
+                // explicit way to say so, and as the "list them all" verb on its own.
                 case "--all" or "-a" or "all":
                     allProjects = true;
                     continue;
@@ -79,6 +81,11 @@ internal sealed record NugetRequest(
             }
 
             version = parsed;
+        }
+
+        if (allProjects && forceSelection)
+        {
+            return new NugetRequest(NugetAction.Help, Error: "'--all' and '--select' ask for opposite things; use one or the other.");
         }
 
         if (version is not null)

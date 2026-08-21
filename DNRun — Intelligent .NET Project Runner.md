@@ -1073,13 +1073,19 @@ The `dnrun` counterpart of §5, with a different question asked of the same pars
 - `IsPackable=false`, and test projects, are excluded outright.
 - A project that *asks* to be packaged — `IsPackable=true`, `PackageId`,
   `GeneratePackageOnBuild`, or `PackAsTool` — is an explicit candidate.
-- When the repository has explicit candidates, only those are offered. Otherwise every remaining
-  project is offered, libraries first: a repository that publishes nothing explicitly is exactly
-  where guessing is wrong, so the menu appears instead.
+- When the repository has explicit candidates, only those are taken. Otherwise every remaining
+  project is taken, libraries first.
 
-Selection, prompting, and persistence follow §6 and §7 unchanged, storing `packageProject` in
-`dnrun.config.json`. It is deliberately separate from `startupProject`: the application you run
-and the library you publish are rarely the same project.
+This is where `dnuget` parts company with §6. Running is about one application, so the menu is
+right: only one process can be started. Publishing is about the release, and a repository releases
+as one thing — so a version applies to *every* packable project at once and nothing is asked. Where
+`dnrun` prompts, `dnuget` acts.
+
+`dnuget select [version]` is the escape hatch for the repository where one package moves apart from
+the others: it prompts per §6, versions only the chosen project, and stores `packageProject` in
+`dnrun.config.json` per §7. That setting steers `dnuget` on its own and the next `dnuget select`;
+it never narrows what `dnuget <version>` writes. It is deliberately separate from `startupProject`:
+the application you run and the library you publish are rarely the same project.
 
 ## 19.2 Version Source Resolution
 
@@ -1089,8 +1095,8 @@ The file to edit is not always the project file:
 2. Otherwise the nearest `Directory.Build.props` between the project and the repository root that
    declares one — the shared-version layout every multi-package repository uses. Writing a
    `<Version>` into the `.csproj` there would silently opt that project *out* of the shared
-   version rather than bumping it, so the props file is updated and the projects sharing it are
-   named first.
+   version rather than bumping it, so the props file is updated — once per file, however many
+   projects inherit it. On the single-project paths the projects sharing it are named first.
 3. Otherwise the `.csproj`, which gains a `<Version>`.
 
 ## 19.3 Properties Written
@@ -1121,12 +1127,12 @@ project file.
 ## 19.5 Command Surface
 
 ```text
-dnuget <version>          Set the package version
-dnuget                    Show the package project and its declared version
+dnuget <version>          Set the package version of every packable project
+dnuget                    Show the packable projects and the versions they declare
 dnuget list               Every packable project with its current version
-dnuget select [version]   Choose a different package project, save it
-dnuget --all <version>    Version every packable project; shared files written once
-dnuget reset              Forget the saved package project
+dnuget select [version]   Choose one package project, save it, version only that one
+dnuget --all <version>    The default, said explicitly
+dnuget reset              Forget the project chosen by 'dnuget select'
 ```
 
 Exit codes follow §5 of the plan, with one addition: `5` when a project file could not be

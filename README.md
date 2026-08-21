@@ -23,8 +23,9 @@ actually runnable, asks once when there is more than one, and remembers the answ
 `dnrun.config.json` at the repository root. It is installed once, outside your projects, and
 never copied into them.
 
-The same discovery drives `dnuget`, which sets the version of the NuGet package the repository
-publishes:
+The same discovery drives `dnuget`, which sets the version of the NuGet packages the repository
+publishes. Running is about one application, so `dnrun` asks which one; publishing is about the
+release, so `dnuget` never asks - one version applies to every packable project in the repository:
 
 ```text
 C:\Projects\XYZ> dnuget 1.2.14
@@ -77,12 +78,12 @@ dnrun list
 | `dnrun reset` | Forget the saved startup project. |
 | `dnrun -- <args>` | Run, forwarding `<args>` to the application. |
 | `dnrun --help`, `dnrun version` | Usage and version. |
-| `dnuget <version>` | Set the version of the NuGet package to be published. |
-| `dnuget` | Show the package project and the version it currently declares. |
+| `dnuget <version>` | Set that version on **every** packable project. Never asks. |
+| `dnuget` | Show the packable projects and the versions they currently declare. |
 | `dnuget list` | List every packable project with its current version. |
-| `dnuget select <version>` | Choose a different package project, save it, and set the version. |
-| `dnuget --all <version>` | Set the version on every packable project. |
-| `dnuget reset` | Forget the saved package project. |
+| `dnuget select <version>` | Version one chosen project instead of all of them. |
+| `dnuget --all <version>` | The default, said explicitly. |
+| `dnuget reset` | Forget the project chosen by `dnuget select`. |
 
 `dnuget` and `dnrun nuget` are the same command: `dnuget.cmd` is a shim the installer writes next
 to `DNRun.exe`.
@@ -156,13 +157,17 @@ Updated src/XYZ.Core/XYZ.Core.csproj:
 XYZ.Core will now publish as 1.2.14.
 ```
 
-**Which project.** The same discovery pass as `dnrun`, filtered differently: a project is packable
-unless it says `<IsPackable>false</IsPackable>` or is a test project. Projects that *ask* to be
-packaged - `IsPackable`, `PackageId`, `GeneratePackageOnBuild`, or `PackAsTool` - are the only ones
-offered when any of them exists; otherwise every remaining project is offered, libraries first.
-With several candidates you are asked once and the answer is saved as `packageProject`, exactly as
-`startupProject` is saved for running. The two are independent: the app you run and the library you
-publish are rarely the same project.
+**Which projects.** All of them. The same discovery pass as `dnrun`, filtered differently: a
+project is packable unless it says `<IsPackable>false</IsPackable>` or is a test project. Projects
+that *ask* to be packaged - `IsPackable`, `PackageId`, `GeneratePackageOnBuild`, or `PackAsTool` -
+are the only ones taken when any of them exists; otherwise every remaining project is taken,
+libraries first. A repository releases as one thing, so the version you pass is written to every
+one of them and no question is asked. Projects sharing a `Directory.Build.props` have it rewritten
+once, not once per project.
+
+For the rare repository where one package moves apart from the others, `dnuget select 1.2.14` asks
+which project and versions only that one, saving the choice as `packageProject`. That is the only
+command that asks, and `dnuget reset` forgets the answer.
 
 **Which properties.** Whichever the project already declares - `PackageVersion`, `Version`, or
 `VersionPrefix`/`VersionSuffix` - plus `InformationalVersion`, `AssemblyVersion`, and `FileVersion`
@@ -209,8 +214,8 @@ does not invalidate them. Two optional settings:
 }
 ```
 
-`packageProject` is the project `dnuget` versions, saved the first time you choose between
-several.
+`packageProject` is the project `dnuget select` last chose. `dnuget <version>` ignores it and
+versions every packable project.
 
 `runnableProjects` is an escape hatch. DNRun reads `.csproj` files directly and does **not**
 evaluate MSBuild, so a project whose `OutputType` is set in a `Directory.Build.props` looks like a

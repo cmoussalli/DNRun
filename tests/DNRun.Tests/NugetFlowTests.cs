@@ -88,7 +88,7 @@ public sealed class NugetFlowTests
     }
 
     [Fact]
-    public void A_saved_package_project_is_used_without_asking()
+    public void A_saved_package_project_does_not_narrow_a_version()
     {
         using var repo = TempRepo.Create()
             .WithProject("src/A/A.csproj", extraProperties: "<PackageId>A</PackageId>")
@@ -98,8 +98,8 @@ public sealed class NugetFlowTests
         var (exitCode, output) = Invoke(repo, "nuget", "1.2.14");
 
         Assert.Equal(0, exitCode);
+        Assert.Contains("<Version>1.2.14</Version>", Csproj("src/A/A.csproj", repo), StringComparison.Ordinal);
         Assert.Contains("<Version>1.2.14</Version>", Csproj("src/B/B.csproj", repo), StringComparison.Ordinal);
-        Assert.DoesNotContain("<Version>", Csproj("src/A/A.csproj", repo), StringComparison.Ordinal);
         Assert.DoesNotContain("Select", output, StringComparison.Ordinal);
     }
 
@@ -119,7 +119,7 @@ public sealed class NugetFlowTests
     }
 
     [Fact]
-    public void Several_candidates_and_no_terminal_refuses_rather_than_guessing()
+    public void Several_candidates_are_all_versioned_without_asking()
     {
         using var repo = TempRepo.Create()
             .WithProject("src/A/A.csproj", extraProperties: "<PackageId>A</PackageId>")
@@ -127,10 +127,39 @@ public sealed class NugetFlowTests
 
         var (exitCode, output) = Invoke(repo, "nuget", "1.2.14");
 
+        Assert.Equal(0, exitCode);
+        Assert.Contains("<Version>1.2.14</Version>", Csproj("src/A/A.csproj", repo), StringComparison.Ordinal);
+        Assert.Contains("<Version>1.2.14</Version>", Csproj("src/B/B.csproj", repo), StringComparison.Ordinal);
+        Assert.DoesNotContain("Select", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("interactive terminal", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Choosing_one_project_without_a_terminal_refuses_rather_than_guessing()
+    {
+        using var repo = TempRepo.Create()
+            .WithProject("src/A/A.csproj", extraProperties: "<PackageId>A</PackageId>")
+            .WithProject("src/B/B.csproj", extraProperties: "<PackageId>B</PackageId>");
+
+        var (exitCode, output) = Invoke(repo, "nuget", "select", "1.2.14");
+
         Assert.Equal(ExitCodes.UsageError, exitCode);
-        Assert.Contains("no interactive terminal", output, StringComparison.Ordinal);
+        Assert.Contains("interactive terminal", output, StringComparison.Ordinal);
         Assert.DoesNotContain("<Version>", Csproj("src/A/A.csproj", repo), StringComparison.Ordinal);
         Assert.DoesNotContain("<Version>", Csproj("src/B/B.csproj", repo), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void All_and_select_together_are_refused_before_the_repository_is_touched()
+    {
+        using var repo = TempRepo.Create()
+            .WithProject("src/A/A.csproj", extraProperties: "<PackageId>A</PackageId>");
+
+        var (exitCode, output) = Invoke(repo, "nuget", "--all", "--select", "1.2.14");
+
+        Assert.Equal(ExitCodes.UsageError, exitCode);
+        Assert.Contains("opposite things", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("<Version>", Csproj("src/A/A.csproj", repo), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -146,7 +175,7 @@ public sealed class NugetFlowTests
     }
 
     [Fact]
-    public void All_versions_every_package_and_writes_a_shared_props_file_once()
+    public void A_version_reaches_every_package_and_writes_a_shared_props_file_once()
     {
         using var repo = TempRepo.Create()
             .WithFile("Directory.Build.props", """
@@ -159,7 +188,7 @@ public sealed class NugetFlowTests
             .WithProject("src/A/A.csproj", extraProperties: "<PackageId>A</PackageId>")
             .WithProject("src/B/B.csproj", extraProperties: "<PackageId>B</PackageId>");
 
-        var (exitCode, output) = Invoke(repo, "nuget", "--all", "3.2.0");
+        var (exitCode, output) = Invoke(repo, "nuget", "3.2.0");
 
         Assert.Equal(0, exitCode);
         Assert.Contains("<Version>3.2.0</Version>", Csproj("Directory.Build.props", repo), StringComparison.Ordinal);
@@ -169,7 +198,21 @@ public sealed class NugetFlowTests
     }
 
     [Fact]
-    public void Bumping_an_inherited_version_names_the_projects_that_share_it()
+    public void The_all_flag_is_the_default_said_explicitly()
+    {
+        using var repo = TempRepo.Create()
+            .WithProject("src/A/A.csproj", extraProperties: "<PackageId>A</PackageId>")
+            .WithProject("src/B/B.csproj", extraProperties: "<PackageId>B</PackageId>");
+
+        var (exitCode, _) = Invoke(repo, "nuget", "--all", "1.2.14");
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("<Version>1.2.14</Version>", Csproj("src/A/A.csproj", repo), StringComparison.Ordinal);
+        Assert.Contains("<Version>1.2.14</Version>", Csproj("src/B/B.csproj", repo), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_single_project_says_where_an_inherited_version_is_written()
     {
         using var repo = TempRepo.Create()
             .WithFile("Directory.Build.props", """
@@ -179,15 +222,27 @@ public sealed class NugetFlowTests
                   </PropertyGroup>
                 </Project>
                 """)
-            .WithProject("src/A/A.csproj", extraProperties: "<PackageId>A</PackageId>")
-            .WithProject("src/B/B.csproj", extraProperties: "<PackageId>B</PackageId>")
-            .WithConfig("""{ "packageProject": "src/A/A.csproj" }""");
+            .WithProject("src/A/A.csproj", extraProperties: "<PackageId>A</PackageId>");
 
         var (exitCode, output) = Invoke(repo, "nuget", "3.2.0");
 
         Assert.Equal(0, exitCode);
-        Assert.Contains("Directory.Build.props", output, StringComparison.Ordinal);
-        Assert.Contains("inherits it: B", output, StringComparison.Ordinal);
+        Assert.Contains("declared in Directory.Build.props", output, StringComparison.Ordinal);
+        Assert.Contains("<Version>3.2.0</Version>", Csproj("Directory.Build.props", repo), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Showing_several_candidates_lists_them_instead_of_asking()
+    {
+        using var repo = TempRepo.Create()
+            .WithProject("src/A/A.csproj", extraProperties: "<PackageId>A</PackageId>")
+            .WithProject("src/B/B.csproj", extraProperties: "<PackageId>B</PackageId>");
+
+        var (exitCode, output) = Invoke(repo, "nuget");
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Packable projects (2)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("Select", output, StringComparison.Ordinal);
     }
 
     [Fact]
